@@ -6,9 +6,6 @@ export default defineConfig({
   // Disable the Cloudflare Workers adapter when deploying to Vercel
   cloudflare: isVercel ? false : undefined,
   vite: {
-    build: {
-      outDir: "dist/client",
-    },
     server: {
       host: "127.0.0.1",
       port: 5173,
