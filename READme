@@ -1,0 +1,150 @@
+<div align="center">
+
+# 🎵 Mood Sync — Cyber Edition
+
+> **AI-powered emotion-aware music experience with real-time collaborative listening**
+
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Firebase](https://img.shields.io/badge/Firebase-10-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)](https://firebase.google.com)
+[![Supabase](https://img.shields.io/badge/Supabase-2-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
+[![TailwindCSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+
+</div>
+
+---
+
+## ✨ What is Mood Sync?
+
+**Mood Sync** detects your facial emotion in real time and automatically curates music that matches your mood — all inside a sleek cyberpunk-themed UI. Listen together with friends in synced rooms, chat, draw on a shared whiteboard, and track your emotional journey over time.
+
+---
+
+## 🚀 Features
+
+| Feature | Description |
+|---|---|
+| 🎭 **Emotion Detection** | Real-time facial emotion recognition via `face-api.js` |
+| 🎵 **Mood-Based Music** | Auto-curates tracks from JioSaavn & Spotify based on your emotion |
+| 🔊 **Audio Visualizer** | Live frequency bar visualizer using Web Audio API |
+| 🏠 **Sync Rooms** | Create or join rooms to listen in perfect sync with friends |
+| 💬 **Live Chat** | In-room real-time chat powered by Firebase |
+| 🎨 **Whiteboard** | Collaborative drawing canvas shared across room members |
+| 👥 **Friends Panel** | See what your friends are currently listening to |
+| 📊 **Mood Insights** | Charts and history of your emotional listening patterns |
+| 🌗 **Dark / Light Theme** | Toggle between themes with smooth transitions |
+| ✨ **Particle Field** | Animated ambient particle background |
+
+---
+
+## 🛠️ Tech Stack
+
+```
+Frontend       →  React 19 + TypeScript + TailwindCSS v4 + Framer Motion
+Routing        →  TanStack Router + TanStack Query
+UI Components  →  Radix UI + shadcn/ui
+Auth           →  Firebase Auth + Supabase Auth
+Database       →  Firebase Realtime DB + Supabase (PostgreSQL)
+Music APIs     →  Spotify Web API + JioSaavn API
+AI / Vision    →  face-api.js (TensorFlow.js)
+Build          →  Vite 7 + Bun
+Deploy         →  Cloudflare Workers (via Wrangler)
+```
+
+---
+
+## ⚡ Getting Started
+
+### Prerequisites
+
+- [Bun](https://bun.sh) or Node.js 18+
+- Firebase project with Realtime Database enabled
+- Supabase project
+- Spotify Developer App (for Spotify integration)
+
+### 1. Clone & Install
+
+```bash
+git clone https://github.com/your-username/music-main.git
+cd music-main
+bun install        # or: npm install
+```
+
+### 2. Configure Environment
+
+Copy `.env.example` to `.env` and fill in your keys:
+
+```env
+VITE_FIREBASE_API_KEY=<your_firebase_api_key>
+VITE_FIREBASE_AUTH_DOMAIN=<your_auth_domain>
+VITE_FIREBASE_DATABASE_URL=<your_database_url>
+VITE_FIREBASE_PROJECT_ID=<your_project_id>
+VITE_SUPABASE_URL=<your_supabase_url>
+VITE_SUPABASE_ANON_KEY=<your_supabase_anon_key>
+VITE_SPOTIFY_CLIENT_ID=<your_spotify_client_id>
+```
+
+### 3. Run Locally
+
+```bash
+bun run dev        # starts Vite dev server + Express proxy
+```
+
+Open [http://localhost:5173](http://localhost:5173) 🎉
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+├── components/
+│   ├── Dashboard.tsx        # Main app shell
+│   ├── EmotionDetector.tsx  # Webcam + face-api emotion detection
+│   ├── SpotifyPlayer.tsx    # Spotify integration & playback
+│   ├── MusicPlayer.tsx      # Audio player with visualizer
+│   ├── RoomPanel.tsx        # Create / join sync rooms
+│   ├── ChatPanel.tsx        # Real-time room chat
+│   ├── FriendsPanel.tsx     # Friends & their current tracks
+│   ├── Whiteboard.tsx       # Collaborative drawing canvas
+│   └── ui/                  # shadcn/ui component library
+├── lib/
+│   ├── auth.tsx             # Auth context (Firebase + Supabase)
+│   ├── music.ts             # Emotion → music mapping
+│   ├── room.ts              # Room state & sync logic
+│   ├── spotify.ts           # Spotify API helpers
+│   └── saavn.ts             # JioSaavn API helpers
+└── routes/
+    ├── index.tsx            # Dashboard route
+    ├── login.tsx            # Auth page
+    └── insights.tsx         # Mood analytics
+```
+
+---
+
+## 🎭 Supported Emotions
+
+| Emotion | 😊 Happy | 😢 Sad | 😠 Angry | 😨 Fearful | 😲 Surprised | 🤢 Disgusted | 😐 Neutral |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Music Genre | Upbeat Pop | Soft Ballads | Metal / Rock | Ambient | Dance | Blues | Lo-fi |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feat/your-feature`
+3. Commit your changes: `git commit -m "feat: add your feature"`
+4. Push and open a Pull Request
+
+---
+
+## 📄 License
+
+MIT © 2024 Mood Sync
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ using React, Firebase, and a little bit of AI magic ✨</sub>
+</div>
