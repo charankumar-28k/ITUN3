@@ -39,9 +39,9 @@ function ProfilePage() {
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
 
-  const userId      = (user as any)?.uid ?? (user as any)?.id ?? "";
-  const displayName = profile?.display_name ?? (user as any)?.email?.split("@")[0] ?? "Listener";
-  const email       = (user as any)?.email ?? "";
+  const userId      = user?.id ?? "";
+  const displayName = profile?.display_name ?? user?.email?.split("@")[0] ?? "Listener";
+  const email       = user?.email ?? "";
 
   const [copied, setCopied]       = useState(false);
   const [editing, setEditing]     = useState(false);

@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Lock, Mail, Sparkles, User as UserIcon, Loader2 } from "lucide-react";
 import { z } from "zod";
+import { useNavigate } from "@tanstack/react-router";
 import { ParticleField } from "./ParticleField";
-import { AnimatedEye } from "./AnimatedEye";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 
@@ -26,10 +26,11 @@ const ORBIT_CONFIG = NOTES.map((_, i) => ({
 
 export function AuthPage() {
   const { signIn, signUp, user } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    if (user) window.location.replace("/");
-  }, [user]);
+    if (user) navigate({ to: "/", replace: true });
+  }, [user, navigate]);
 
   const [mode, setMode]   = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -51,8 +52,6 @@ export function AuthPage() {
     }
     setBusy(false);
   };
-
-  const eyeState = focus === "pw" || pw.length > 0 ? "closed" : focus ? "open" : "idle";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,7 +133,6 @@ export function AuthPage() {
         className="glass glow-border rounded-3xl p-8 md:p-10 w-full max-w-md relative z-10"
       >
         <div className="flex flex-col items-center mb-6">
-          <AnimatedEye state={eyeState} />
           <div className="flex items-center gap-2 mt-4">
             <Sparkles className="h-4 w-4 text-[#aac0e1]" />
             <span className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Mood Sync</span>

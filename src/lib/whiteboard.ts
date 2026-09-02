@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ref, push, set, onValue, off, serverTimestamp, remove } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/integrations/supabase/client";
 
 export type Point = { x: number; y: number };
 export type StrokeTool = "pen" | "eraser" | "rect" | "ellipse" | "line" | "text" | "arrow" | "triangle" | "star";
@@ -22,85 +21,100 @@ export type Stroke = {
 };
 
 export function useWhiteboard(roomId: string | null, userId: string) {
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [strokes, setStrokes]     = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<string[]>([]);
-  const lastClearTs = useRef<number>(0);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
     if (!roomId) { setStrokes([]); setUndoStack([]); return; }
 
-    const strokesRef = ref(db, `rooms/${roomId}/board/strokes`);
-    const clearRef   = ref(db, `rooms/${roomId}/board/clear`);
-
-    onValue(clearRef, (snap) => {
-      if (!snap.exists()) return;
-      const ts = snap.val()?.ts ?? 0;
-      if (typeof ts === "number" && ts > lastClearTs.current) {
-        lastClearTs.current = ts;
-        setStrokes([]);
-        setUndoStack([]);
-      }
-    });
-
-    onValue(strokesRef, (snap) => {
-      const list: Stroke[] = [];
-      snap.forEach((child) => {
-        const v = child.val();
-        list.push({
-          id:         child.key!,
-          uid:        v.uid        ?? "",
-          color:      v.color      ?? "#ffffff",
-          fill:       v.fill       ?? "",
-          opacity:    v.opacity    ?? 1,
-          width:      v.width      ?? 3,
-          tool:       v.tool       ?? "pen",
-          points:     v.points     ?? [],
-          text:       v.text       ?? "",
-          fontSize:   v.fontSize   ?? 20,
-          fontStyle:  v.fontStyle  ?? "normal",
-          fontFamily: v.fontFamily ?? "sans-serif",
-          ts:         typeof v.ts === "number" ? v.ts : Date.now(),
-        });
+    // Load existing strokes
+    supabase
+      .from("whiteboard_strokes")
+      .select("*")
+      .eq("room_id", roomId)
+      .order("ts", { ascending: true })
+      .then(({ data }) => {
+        if (data) setStrokes(data.map(rowToStroke));
       });
-      list.sort((a, b) => a.ts - b.ts);
-      setStrokes(list);
-    });
 
-    return () => { off(strokesRef); off(clearRef); };
+    const channel = supabase.channel(`whiteboard:${roomId}`)
+      .on("broadcast", { event: "stroke" }, ({ payload }) => {
+        setStrokes((prev) => {
+          if (prev.find((s) => s.id === payload.id)) return prev;
+          return [...prev, payload as Stroke].sort((a, b) => a.ts - b.ts);
+        });
+      })
+      .on("broadcast", { event: "undo" }, ({ payload }) => {
+        setStrokes((prev) => prev.filter((s) => s.id !== payload.id));
+      })
+      .on("broadcast", { event: "clear" }, () => {
+        setStrokes([]); setUndoStack([]);
+      })
+      .subscribe();
+
+    channelRef.current = channel;
+    return () => {
+      supabase.removeChannel(channel);
+      channelRef.current = null;
+    };
   }, [roomId]);
 
   const pushStroke = useCallback((stroke: Omit<Stroke, "id" | "uid" | "ts">) => {
-    if (!roomId) return;
-    const newRef = push(ref(db, `rooms/${roomId}/board/strokes`), {
-      uid:        userId,
-      color:      stroke.color,
-      fill:       stroke.fill       ?? "",
-      opacity:    stroke.opacity    ?? 1,
-      width:      stroke.width,
-      tool:       stroke.tool,
-      points:     stroke.points,
-      text:       stroke.text       ?? "",
-      fontSize:   stroke.fontSize   ?? 20,
-      fontStyle:  stroke.fontStyle  ?? "normal",
-      fontFamily: stroke.fontFamily ?? "sans-serif",
-      ts:         serverTimestamp(),
-    });
-    setUndoStack((prev) => [...prev, newRef.key!]);
+    if (!roomId || !channelRef.current) return;
+    const full: Stroke = {
+      ...stroke, id: crypto.randomUUID(), uid: userId, ts: Date.now(),
+    };
+    setStrokes((prev) => [...prev, full]);
+    setUndoStack((prev) => [...prev, full.id]);
+    channelRef.current.send({ type: "broadcast", event: "stroke", payload: full });
+    supabase.from("whiteboard_strokes").insert(strokeToRow(full, roomId));
   }, [roomId, userId]);
 
   const undo = useCallback(() => {
-    if (!roomId || undoStack.length === 0) return;
+    if (!roomId || undoStack.length === 0 || !channelRef.current) return;
     const lastId = undoStack[undoStack.length - 1];
-    remove(ref(db, `rooms/${roomId}/board/strokes/${lastId}`));
+    setStrokes((prev) => prev.filter((s) => s.id !== lastId));
     setUndoStack((prev) => prev.slice(0, -1));
+    channelRef.current.send({ type: "broadcast", event: "undo", payload: { id: lastId } });
+    supabase.from("whiteboard_strokes").delete().eq("id", lastId);
   }, [roomId, undoStack]);
 
   const clearBoard = useCallback(() => {
-    if (!roomId) return;
-    remove(ref(db, `rooms/${roomId}/board/strokes`));
-    set(ref(db, `rooms/${roomId}/board/clear`), { ts: Date.now(), by: userId });
-    setUndoStack([]);
-  }, [roomId, userId]);
+    if (!roomId || !channelRef.current) return;
+    setStrokes([]); setUndoStack([]);
+    channelRef.current.send({ type: "broadcast", event: "clear", payload: {} });
+    supabase.from("whiteboard_strokes").delete().eq("room_id", roomId);
+  }, [roomId]);
 
   return { strokes, pushStroke, undo, clearBoard, canUndo: undoStack.length > 0 };
+}
+
+function rowToStroke(row: any): Stroke {
+  return {
+    id:         row.id,
+    uid:        row.uid,
+    color:      row.color      ?? "#ffffff",
+    fill:       row.fill       ?? "",
+    opacity:    row.opacity    ?? 1,
+    width:      row.width      ?? 3,
+    tool:       row.tool       ?? "pen",
+    points:     row.points     ?? [],
+    text:       row.text       ?? "",
+    fontSize:   row.font_size  ?? 20,
+    fontStyle:  row.font_style ?? "normal",
+    fontFamily: row.font_family ?? "sans-serif",
+    ts:         row.ts         ?? Date.now(),
+  };
+}
+
+function strokeToRow(s: Stroke, roomId: string) {
+  return {
+    id: s.id, room_id: roomId, uid: s.uid,
+    color: s.color, fill: s.fill ?? "", opacity: s.opacity ?? 1,
+    width: s.width, tool: s.tool, points: s.points,
+    text: s.text ?? "", font_size: s.fontSize ?? 20,
+    font_style: s.fontStyle ?? "normal", font_family: s.fontFamily ?? "sans-serif",
+    ts: s.ts,
+  };
 }

@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ref, set, get, push, update, remove,
-  onValue, off, serverTimestamp, query, orderByChild, equalTo,
-} from "firebase/database";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 export type RoomState = {
@@ -44,94 +40,97 @@ export function useRoom({ userId, displayName }: Opts) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError]           = useState<string | null>(null);
 
-  const listenersRef = useRef<string[]>([]);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const isHost = hostId === userId;
 
   const cleanup = useCallback(() => {
-    listenersRef.current.forEach((path) => off(ref(db, path)));
-    listenersRef.current = [];
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
   }, []);
 
-  const attachListeners = useCallback((rid: string) => {
+  const attachListeners = useCallback((rid: string, initialMembers: Member[]) => {
     cleanup();
-    const paths = {
-      room:    `rooms/${rid}`,
-      members: `rooms/${rid}/members`,
-      chat:    `rooms/${rid}/chat`,
-    };
-    listenersRef.current = Object.values(paths);
+    setMembers(initialMembers);
 
-    onValue(ref(db, paths.room), (snap) => {
-      if (!snap.exists()) {
-        toast.error("Room was closed.");
-        cleanup();
-        setCode(null); setRoomId(null); setHostId(null);
-        setState(null); setMessages([]); setMembers([]);
-        return;
-      }
-      const d = snap.val();
-      setState({
-        trackId:       d.songId          ?? null,
-        trackName:     d.trackName       ?? null,
-        trackArtists:  d.trackArtists    ?? null,
-        trackCover:    d.trackCover      ?? null,
-        trackUrl:      d.trackUrl        ?? null,
-        playing:       d.isPlaying       ?? false,
-        positionMs:    d.positionMs      ?? 0,
-        updatedAt:     typeof d.updatedAt === "number" ? d.updatedAt : Date.now(),
-        lastUpdatedBy: d.lastUpdatedBy   ?? null,
+    // Load existing messages
+    supabase
+      .from("room_messages")
+      .select("*")
+      .eq("room_id", rid)
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (data) setMessages(data.map((m) => ({
+          id: m.id, user_id: m.user_id, user_name: m.text.startsWith("[") ? "Listener" : m.user_id,
+          text: m.text, ts: new Date(m.created_at).getTime(), songMention: null,
+        })));
       });
-    });
 
-    onValue(ref(db, paths.members), (snap) => {
-      const list: Member[] = [];
-      snap.forEach((child) => {
-        list.push({ user_id: child.key!, display_name: child.val().displayName ?? "Listener" });
-      });
-      setMembers(list);
-    });
-
-    onValue(ref(db, paths.chat), (snap) => {
-      const msgs: ChatMsg[] = [];
-      snap.forEach((child) => {
-        const v = child.val();
-        const ts = typeof v.timestamp === "number"
-          ? v.timestamp
-          : typeof v.ts === "number"
-          ? v.ts
-          : Date.now();
-        msgs.push({
-          id:          child.key!,
-          user_id:     v.uid         ?? "",
-          user_name:   v.user        ?? "Listener",
-          text:        v.text        ?? "",
-          ts,
-          songMention: v.songMention ?? null,
+    const channel = supabase.channel(`room:${rid}`)
+      // Room state sync via broadcast
+      .on("broadcast", { event: "state" }, ({ payload }) => {
+        setState({
+          trackId:      payload.trackId      ?? null,
+          trackName:    payload.trackName    ?? null,
+          trackArtists: payload.trackArtists ?? null,
+          trackCover:   payload.trackCover   ?? null,
+          trackUrl:     payload.trackUrl     ?? null,
+          playing:      payload.playing      ?? false,
+          positionMs:   payload.positionMs   ?? 0,
+          updatedAt:    payload.updatedAt    ?? Date.now(),
+          lastUpdatedBy: payload.lastUpdatedBy ?? null,
         });
+      })
+      // Chat messages via broadcast
+      .on("broadcast", { event: "chat" }, ({ payload }) => {
+        setMessages((prev) => {
+          if (prev.find((m) => m.id === payload.id)) return prev;
+          return [...prev, payload as ChatMsg].sort((a, b) => a.ts - b.ts);
+        });
+      })
+      // Member presence
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState<{ user_id: string; display_name: string }>();
+        const list: Member[] = Object.values(state).flat().map((p) => ({
+          user_id: p.user_id,
+          display_name: p.display_name,
+        }));
+        setMembers(list);
+      })
+      .on("presence", { event: "leave" }, ({ leftPresences }) => {
+        setMembers((prev) => prev.filter((m) =>
+          !leftPresences.some((p: any) => p.user_id === m.user_id)
+        ));
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({ user_id: userId, display_name: displayName });
+        }
       });
-      msgs.sort((a, b) => a.ts - b.ts);
-      setMessages(msgs);
-    });
-  }, [cleanup]);
+
+    channelRef.current = channel;
+  }, [cleanup, userId, displayName]);
 
   const create = useCallback(async () => {
     setError(null);
     setConnecting(true);
     try {
       const code = generateCode();
-      const roomRef = push(ref(db, "rooms"));
-      const rid = roomRef.key!;
-      await set(roomRef, {
-        code, host: userId,
-        songId: null, isPlaying: false, positionMs: 0,
-        trackName: null, trackArtists: null, trackCover: null, trackUrl: null,
-        updatedAt: serverTimestamp(), lastUpdatedBy: userId,
+      const { data: room, error: err } = await supabase
+        .from("rooms")
+        .insert({ code, host_id: userId })
+        .select()
+        .single();
+      if (err || !room) throw new Error(err?.message ?? "Failed to create room");
+
+      await supabase.from("room_members").insert({ room_id: room.id, user_id: userId });
+      await supabase.from("room_state").insert({
+        room_id: room.id, track_id: null, playing: false, position_ms: 0,
       });
-      await set(ref(db, `rooms/${rid}/members/${userId}`), {
-        displayName, joinedAt: serverTimestamp(),
-      });
-      setCode(code); setRoomId(rid); setHostId(userId);
-      attachListeners(rid);
+
+      setCode(code); setRoomId(room.id); setHostId(userId);
+      attachListeners(room.id, [{ user_id: userId, display_name: displayName }]);
       toast.success(`Room created! Code: ${code}`);
     } catch (err: any) {
       const msg = err.message ?? "Failed to create room";
@@ -145,19 +144,24 @@ export function useRoom({ userId, displayName }: Opts) {
     setError(null);
     setConnecting(true);
     try {
-      const q = query(ref(db, "rooms"), orderByChild("code"), equalTo(inputCode.trim()));
-      const snap = await get(q);
-      if (!snap.exists()) {
-        const msg = "Room not found.";
-        setError(msg); toast.error(msg); return;
-      }
-      let rid = ""; let roomData: any = null;
-      snap.forEach((child) => { rid = child.key!; roomData = child.val(); });
-      await set(ref(db, `rooms/${rid}/members/${userId}`), {
-        displayName, joinedAt: serverTimestamp(),
-      });
-      setCode(roomData.code); setRoomId(rid); setHostId(roomData.host);
-      attachListeners(rid);
+      const { data: room, error: err } = await supabase
+        .from("rooms")
+        .select("*")
+        .eq("code", inputCode.trim())
+        .single();
+      if (err || !room) throw new Error("Room not found.");
+
+      await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId });
+
+      const { data: existingMembers } = await supabase
+        .from("room_members")
+        .select("user_id")
+        .eq("room_id", room.id);
+
+      setCode(room.code); setRoomId(room.id); setHostId(room.host_id);
+      attachListeners(room.id, (existingMembers ?? []).map((m) => ({
+        user_id: m.user_id, display_name: "Listener",
+      })));
       toast.success("Connected to room!");
     } catch (err: any) {
       const msg = err.message ?? "Failed to join room";
@@ -165,55 +169,74 @@ export function useRoom({ userId, displayName }: Opts) {
     } finally {
       setConnecting(false);
     }
-  }, [userId, displayName, attachListeners]);
+  }, [userId, attachListeners]);
 
   const leave = useCallback(async () => {
-    if (roomId) await remove(ref(db, `rooms/${roomId}/members/${userId}`));
+    if (roomId) {
+      await supabase.from("room_members").delete().eq("room_id", roomId).eq("user_id", userId);
+      if (isHost) {
+        await supabase.from("room_state").delete().eq("room_id", roomId);
+        await supabase.from("room_messages").delete().eq("room_id", roomId);
+        await supabase.from("room_members").delete().eq("room_id", roomId);
+        await supabase.from("rooms").delete().eq("id", roomId);
+      }
+    }
     cleanup();
     setCode(null); setRoomId(null); setHostId(null);
     setState(null); setMessages([]); setMembers([]);
     toast.success("Left the room.");
-  }, [roomId, userId, cleanup]);
+  }, [roomId, userId, isHost, cleanup]);
 
-  const broadcastState = useCallback(
-    async (s: {
-      trackId: string | null;
-      trackName?: string | null;
-      trackArtists?: string | null;
-      trackCover?: string | null;
-      trackUrl?: string | null;
-      playing: boolean;
-      positionMs: number;
-    }) => {
-      if (!roomId) return;
-      await update(ref(db, `rooms/${roomId}`), {
-        songId:        s.trackId,
-        isPlaying:     s.playing,
-        positionMs:    Math.floor(s.positionMs),
-        trackName:     s.trackName    ?? null,
-        trackArtists:  s.trackArtists ?? null,
-        trackCover:    s.trackCover   ?? null,
-        trackUrl:      s.trackUrl     ?? null,
-        updatedAt:     serverTimestamp(),
-        lastUpdatedBy: userId,
-      });
-    },
-    [roomId, userId],
-  );
+  const broadcastState = useCallback(async (s: {
+    trackId: string | null;
+    trackName?: string | null;
+    trackArtists?: string | null;
+    trackCover?: string | null;
+    trackUrl?: string | null;
+    playing: boolean;
+    positionMs: number;
+  }) => {
+    if (!roomId || !channelRef.current) return;
+    const payload = {
+      trackId:      s.trackId,
+      trackName:    s.trackName    ?? null,
+      trackArtists: s.trackArtists ?? null,
+      trackCover:   s.trackCover   ?? null,
+      trackUrl:     s.trackUrl     ?? null,
+      playing:      s.playing,
+      positionMs:   Math.floor(s.positionMs),
+      updatedAt:    Date.now(),
+      lastUpdatedBy: userId,
+    };
+    setState(payload);
+    await channelRef.current.send({ type: "broadcast", event: "state", payload });
+    // Also persist to room_state table
+    await supabase.from("room_state").update({
+      track_id: s.trackId, playing: s.playing,
+      position_ms: Math.floor(s.positionMs), updated_by: userId,
+    }).eq("room_id", roomId);
+  }, [roomId, userId]);
 
-  const sendMessage = useCallback(
-    (text: string, songMention?: { id: string; name: string; artists: string; cover: string } | null) => {
-      if (!roomId || !text.trim()) return;
-      push(ref(db, `rooms/${roomId}/chat`), {
-        uid: userId, user: displayName,
-        text: text.trim(),
-        timestamp: serverTimestamp(),
-        ts: Date.now(),
-        songMention: songMention ?? null,
-      });
-    },
-    [roomId, userId, displayName],
-  );
+  const sendMessage = useCallback((
+    text: string,
+    songMention?: { id: string; name: string; artists: string; cover: string } | null,
+  ) => {
+    if (!roomId || !text.trim() || !channelRef.current) return;
+    const msg: ChatMsg = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      user_name: displayName,
+      text: text.trim(),
+      ts: Date.now(),
+      songMention: songMention ?? null,
+    };
+    channelRef.current.send({ type: "broadcast", event: "chat", payload: msg });
+    setMessages((prev) => [...prev, msg]);
+    // Persist to DB
+    supabase.from("room_messages").insert({
+      id: msg.id, room_id: roomId, user_id: userId, text: text.trim(),
+    });
+  }, [roomId, userId, displayName]);
 
   useEffect(() => () => cleanup(), [cleanup]);
 

@@ -1,4 +1,5 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Dashboard } from "@/components/Dashboard";
@@ -18,6 +19,11 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const { user, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!loading && !user) navigate({ to: "/login", replace: true });
+  }, [loading, user, navigate]);
 
   if (loading) {
     return (
@@ -27,13 +33,7 @@ function Index() {
     );
   }
 
-  // Client-side redirect after Firebase resolves auth state
-  if (!user) {
-    if (typeof window !== "undefined") {
-      window.location.replace("/login");
-    }
-    return null;
-  }
+  if (!user) return null;
 
   return (
     <AnimatePresence mode="wait">
